@@ -9,6 +9,8 @@ import re
 import asyncio
 import random
 
+import json
+
 from typing import Optional
 
 """Constant listed from case packet"""
@@ -34,6 +36,14 @@ def round_nearest(x, tick=0.0001):
 '''Finds daily interest rates from annual rate'''
 def daily_rate(daily_rate):
     return math.pow(daily_rate, 1/252)
+
+''' Returns 0 if not int, or else return int rep of string'''
+def IsInt(s):
+    try: 
+        return int(s)
+    except ValueError:
+        return 0
+
 
 class PositionTrackerBot(UTCBot):
     """
@@ -85,7 +95,35 @@ class PositionTrackerBot(UTCBot):
         Modify your long term fair values based on market updates, statistical calculations, 
         etc. 
         """
-        pass
+        LAST_RATE_ROR_USD = 0.25
+        LAST_RATE_HAP_USD = 0.5
+        LAST_RATE_HAP_ROR = 2
+        for asset in FUTURES:
+            if(asset[0] == '6'):
+                base = 'USD'
+                if(asset[1] == 'R'):
+                    quote = 'ROR'
+                else:
+                    quote = 'ROR'
+            else:
+                base = 'ROR'
+                quote = 'HAP'
+            spot = self.mid[asset]
+            if spot == None:
+                if(base == 'ROR'):
+                    self.fair[asset] = LAST_RATE_ROR_USD
+                elif(quote == 'USD'):
+                    self.fair[asset] = LAST_RATE_HAP_USD
+                else:
+                    self.fair[asset] = LAST_RATE_HAP_ROR
+            else:
+                ir_base = self.interestRates[base]
+                ir_quote = self.interestRates[quote]
+                print(asset + ": Base IR=" + ir_base + ", Quote IR=" + ir_quote)
+                fair = round_nearest(float(spot) * float(ir_base) / float(ir_quote), TICK_SIZES[asset])
+                print("SPOT: " + str(spot) + ", FAIR: " + str(fair))
+                self.fair[asset] = fair
+        self.fair['RORUSD'] = self.mid['RORUSD']
     
     async def spot_market(self):
         """
@@ -138,6 +176,7 @@ class PositionTrackerBot(UTCBot):
         Max_Pos - The maximum number of contracts you are willing to hold (we just use risk limit here)
         Max_Range - The greatest you are willing to adjust your fair value by
         """
+        # print("Fair" + json.dumps(self.fair)) 
 
         ##The rate at which you fade is optimized so that you reach your max position
         ##at the same time you reach maximum range on the adjusted fair
@@ -205,17 +244,17 @@ class PositionTrackerBot(UTCBot):
         self.bidorderid = {asset:["",""] for asset in FUTURES}
         self.askorderid = {asset:["",""] for asset in FUTURES}
 
+        self.interestRates = {asset:1.01 for asset in ['ROR', 'HAP', 'USD']}
         """
         Constant params with respect to assets. Modify this is you would like to change
         parameters based on asset
         """
         self.params = {
-            "edge": 0.005,
+            "edge": 0.05,
             "limit": 100,
             "size": 10,
             "spot_limit": 10
         }
-        
     async def handle_exchange_update(self, update: pb.FeedMessage):
         kind, _ = betterproto.which_one_of(update, "msg")
 
@@ -263,7 +302,20 @@ class PositionTrackerBot(UTCBot):
                 self.mid[asset] = mid
         #Competition event messages
         elif kind == "generic_msg":
-            print(update.generic_msg.message)
+            data = update.generic_msg.message.split(',')
+            if(0 < IsInt(data[0])):
+                self.interestRates['ROR'] = data[1]
+                self.interestRates['HAP'] = data[2]
+                self.interestRates['USD'] = data[3]
+                await self.evaluate_fairs()
+            elif("New Federal Funds Target" in data[0]):
+                d = data.split(" ")
+                currency = d[0]
+                target = d[0]
+                print("New Federal Funds Target for " + currency + ":" + target)
+            else:
+                print(update.generic_msg.message)
+
             for asset in FUTURES:
                 await self.place_bids(asset)
                 await self.place_asks(asset)
