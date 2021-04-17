@@ -71,8 +71,6 @@ class PositionTrackerBot(UTCBot):
         Places and modifies a single bid, storing it by asset
         based upon the basic market making functionality
         """
-        if FUTURES_EXPIRY[asset[2]] < TODAY:
-            return
         orders = await self.basic_mm(asset, self.fair[asset], self.edges[asset],
             self.size[asset], self.params["limit"],self.max_widths[asset])
         for index, price in enumerate(orders['bid_prices']):
@@ -92,8 +90,6 @@ class PositionTrackerBot(UTCBot):
         Places and modifies a single bid, storing it by asset
         based upon the basic market making functionality
         """
-        if FUTURES_EXPIRY[asset[2]] < TODAY:
-            return
         orders = await self.basic_mm(asset, self.fair[asset], self.edges[asset],
             self.size[asset], self.params["limit"],self.max_widths[asset])
         for index, price in enumerate(orders['ask_prices']):
@@ -162,41 +158,41 @@ class PositionTrackerBot(UTCBot):
         as best as possible, using market orders (assume spot
         market already is quite liquid)
         """
-        net_position = self.pos["RORUSD"]
-        for month in ["H", "M", "U", "Z"]:
-            net_position += 0.05 * self.pos['RH' + month]
-        net_position = round(net_position)
-        bids_left = self.params["spot_limit"] - self.pos["RORUSD"]
-        asks_left = self.params["spot_limit"] + self.pos["RORUSD"]
+        # net_position = self.pos["RORUSD"]
+        # for month in ["H", "M", "U", "Z"]:
+        #     net_position += 0.05 * self.pos['RH' + month]
+        # net_position = round(net_position)
+        # bids_left = self.params["spot_limit"] - self.pos["RORUSD"]
+        # asks_left = self.params["spot_limit"] + self.pos["RORUSD"]
 
-        if bids_left <= 0:
-            resp = await self.place_order(
-                "RORUSD",
-                pb.OrderSpecType.MARKET,
-                pb.OrderSpecSide.ASK,
-                abs(bids_left) + 1,
-            )
-        elif asks_left <= 0: 
-            resp = await self.place_order(
-                "RORUSD",
-                pb.OrderSpecType.MARKET,
-                pb.OrderSpecSide.BID,
-                abs(asks_left) + 1,
-            )
-        elif (net_position > 0):
-            resp = await self.place_order(
-                "RORUSD",
-                pb.OrderSpecType.MARKET,
-                pb.OrderSpecSide.ASK,
-                min(abs(net_position), asks_left),
-            )
-        elif (net_position < 0):
-            resp = await self.place_order(
-                "RORUSD",
-                pb.OrderSpecType.MARKET,
-                pb.OrderSpecSide.ASK,
-                min(abs(net_position), bids_left),
-            )
+        # if bids_left <= 0:
+        #     resp = await self.place_order(
+        #         "RORUSD",
+        #         pb.OrderSpecType.MARKET,
+        #         pb.OrderSpecSide.ASK,
+        #         abs(bids_left),
+        #     )
+        # elif asks_left <= 0: 
+        #     resp = await self.place_order(
+        #         "RORUSD",
+        #         pb.OrderSpecType.MARKET,
+        #         pb.OrderSpecSide.BID,
+        #         abs(asks_left),
+        #     )
+        # elif (net_position > 0):
+        #     resp = await self.place_order(
+        #         "RORUSD",
+        #         pb.OrderSpecType.MARKET,
+        #         pb.OrderSpecSide.ASK,
+        #         min(abs(net_position), asks_left),
+        #     )
+        # elif (net_position < 0):
+        #     resp = await self.place_order(
+        #         "RORUSD",
+        #         pb.OrderSpecType.MARKET,
+        #         pb.OrderSpecSide.ASK,
+        #         min(abs(net_position), bids_left),
+        #     )
 
     async def basic_mm(self, asset, fair, width, clip, max_pos, max_range):
         """
@@ -271,17 +267,17 @@ class PositionTrackerBot(UTCBot):
         self.pos = {asset:0 for asset in FUTURES + ["RORUSD"]}
         self.fair = {asset:5 for asset in FUTURES + ["RORUSD"]}
         self.mid = {asset: None for asset in FUTURES + ["RORUSD"]}
-        self.max_widths = {asset:0.1 for asset in FUTURES}
+        self.max_widths = {asset:0.01 for asset in FUTURES}
         
         self.bidorderid = {asset:["",""] for asset in FUTURES}
         self.askorderid = {asset:["",""] for asset in FUTURES}
 
         self.interestRates = {asset:1 for asset in ['ROR', 'HAP', 'USD']}
         
-        self.edges = {asset:TICK_SIZES[asset]*12 for asset in FUTURES}
+        self.edges = {asset:TICK_SIZES[asset]*8 for asset in FUTURES}
         self.edges["RORUSD"] = TICK_SIZES["RORUSD"]*2
 
-        self.size = {asset:2 for asset in FUTURES}
+        self.size = {asset:1 for asset in FUTURES}
         self.size["RORUSD"] = 1
         """
         Constant params with respect to assets. Modify this is you would like to change
@@ -289,7 +285,7 @@ class PositionTrackerBot(UTCBot):
         """
         self.params = {
             "limit": 90,
-            "spot_limit": 5
+            "spot_limit": 10
         }
     async def handle_exchange_update(self, update: pb.FeedMessage):
         kind, _ = betterproto.which_one_of(update, "msg")
@@ -315,9 +311,9 @@ class PositionTrackerBot(UTCBot):
             else:
                 self.cash += update.fill_msg.filled_qty * float(update.fill_msg.price)
                 self.pos[update.fill_msg.asset] -= update.fill_msg.filled_qty
-            for asset in FUTURES:
-                await self.place_bids(asset)
-                await self.place_asks(asset)
+            if update.fill_msg.asset != 'RORUSD':
+                await self.place_bids(update.fill_msg.asset)
+                await self.place_asks(update.fill_msg.asset)
             await self.spot_market()
         #Identify mid price through order book updates
         elif kind == "market_snapshot_msg":
