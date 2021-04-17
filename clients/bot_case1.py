@@ -20,7 +20,6 @@ LAST_RATE_HAP_USD = 0.5
 LAST_RATE_HAP_ROR = 2
 YEAR = 0
 
-
 TICK_SIZES = {'6RH': 0.00001, '6RM': 0.00001, '6RU': 0.00001, '6RZ': 0.00001, '6HH': 0.00002, \
     '6HM': 0.00002, '6HU': 0.00002, '6HZ': 0.00002, 'RHH': 0.0001, 'RHM': 0.0001, 'RHU': 0.0001, 'RHZ': 0.0001, "RORUSD": 0.00001}
 LOT_SIZES = {'6RH': 100000, '6RM': 100000, '6RU': 100000, '6RZ': 100000, '6HH': 100000, \
@@ -71,19 +70,20 @@ class PositionTrackerBot(UTCBot):
         based upon the basic market making functionality
         """
         for asset in assets:
-            orders = await self.basic_mm(asset, self.fair[asset], self.edges[asset],
-                self.size[asset], self.params["limit"],self.max_widths[asset])
-            for index, price in enumerate(orders['bid_prices']):
-                if orders['bid_sizes'][index] != 0:
-                    resp = await self.modify_order(
-                        self.bidorderid[asset][index],
-                        asset,
-                        pb.OrderSpecType.LIMIT,
-                        pb.OrderSpecSide.BID,
-                        orders['bid_sizes'][index],
-                        round_nearest(price, TICK_SIZES[asset]),
-                    )
-                    self.bidorderid[asset][index] = resp.order_id
+            if(FUTURES_EXPIRY[asset[2]] >= self.today):
+                orders = await self.basic_mm(asset, self.fair[asset], self.edges[asset],
+                    self.size[asset], self.params["limit"],self.max_widths[asset])
+                for index, price in enumerate(orders['bid_prices']):
+                    if orders['bid_sizes'][index] > 0:
+                        resp = await self.modify_order(
+                            self.bidorderid[asset][index],
+                            asset,
+                            pb.OrderSpecType.LIMIT,
+                            pb.OrderSpecSide.BID,
+                            orders['bid_sizes'][index],
+                            round_nearest(price, TICK_SIZES[asset]),
+                        )
+                        self.bidorderid[asset][index] = resp.order_id
 
     async def place_asks(self, assets):
         """
@@ -91,19 +91,20 @@ class PositionTrackerBot(UTCBot):
         based upon the basic market making functionality
         """
         for asset in assets:
-            orders = await self.basic_mm(asset, self.fair[asset], self.edges[asset],
-                self.size[asset], self.params["limit"],self.max_widths[asset])
-            for index, price in enumerate(orders['ask_prices']):
-                if orders['ask_sizes'][index] != 0:
-                    resp = await self.modify_order(
-                        self.askorderid[asset][index],
-                        asset,
-                        pb.OrderSpecType.LIMIT,
-                        pb.OrderSpecSide.ASK,
-                        orders['ask_sizes'][index],
-                        round_nearest(price, TICK_SIZES[asset]),
-                    )
-                    self.askorderid[asset][index] = resp.order_id
+            if(FUTURES_EXPIRY[asset[2]] >= self.today):
+                orders = await self.basic_mm(asset, self.fair[asset], self.edges[asset],
+                    self.size[asset], self.params["limit"],self.max_widths[asset])
+                for index, price in enumerate(orders['ask_prices']):
+                    if orders['ask_sizes'][index] > 0:
+                        resp = await self.modify_order(
+                            self.askorderid[asset][index],
+                            asset,
+                            pb.OrderSpecType.LIMIT,
+                            pb.OrderSpecSide.ASK,
+                            orders['ask_sizes'][index],
+                            round_nearest(price, TICK_SIZES[asset]),
+                        )
+                        self.askorderid[asset][index] = resp.order_id
 
     async def evaluate_fairs(self):
         ##TO Do
@@ -126,6 +127,7 @@ class PositionTrackerBot(UTCBot):
                 last = LAST_RATE_HAP_USD
             else:
                 last = LAST_RATE_HAP_ROR
+            
             if expiry > self.today: # Check if expired
                 fair = self.mid[asset]
                 if spot == None:
@@ -133,15 +135,21 @@ class PositionTrackerBot(UTCBot):
                 else:
                     ir_base = math.pow(self.interestRates[base],expiry-self.today)
                     ir_quote = math.pow(self.interestRates[quote],expiry-self.today)
+                    if self.federalRates[base][0] != 1:
+                        diff = min(self.today - self.federalRates[base][1] + 1,5)
+                        ir_base = ir_base * (1-diff)/5 + self.federalRates[base][0]*(diff/5)
+                    if self.federalRates[quote][0] != 1:
+                        diff = min(self.today - self.federalRates[quote][1] + 1,5)
+                        ir_base = ir_base * (diff)/5 + self.federalRates[quote][0]*(1-diff)/5
+            
                     # print(asset + ": Base IR=" + str(ir_base) + ", Quote IR=" + str(ir_quote))
                     t = (DAYS_IN_YEAR-self.today)/DAYS_IN_YEAR
                     spot = last*t+spot*(1-t)
                     forwardInterestParity = round_nearest(spot * float(ir_base) / float(ir_quote), TICK_SIZES[asset])
-                    fair = forwardInterestParity
-                    # fair = '''forwardInterestParity*(0.6)*(1-t) + self.mid[asset]*0.2 + '''t*0.2*last
+                    fair = forwardInterestParity*(0.8) + self.mid[asset]*0.2
                     # print("SPOT: " + str(spot) + ", FAIR: " + str(fair))
             else: # use mid price if expired
-                fair = last
+                fair = self.mid[asset]
             self.fair[asset] = fair # Updates the fair price across the bot
         spot = self.mid['RORUSD']
         if spot == None:
@@ -149,7 +157,7 @@ class PositionTrackerBot(UTCBot):
         else: 
             ir_base = math.pow(self.interestRates['ROR'],expiry-self.today)
             ir_quote = math.pow(self.interestRates['USD'],expiry-self.today)
-            self.fair['RORUSD'] = round_nearest(float(spot) * float(ir_base) / float(ir_quote), TICK_SIZES['RORUSD'])
+            self.fair['RORUSD'] = self.mid['RORUSD']*0.8+round_nearest(float(spot) * float(ir_base) / float(ir_quote), TICK_SIZES['RORUSD'])*0.2
     
     async def spot_market(self):
         """
@@ -170,28 +178,28 @@ class PositionTrackerBot(UTCBot):
                 "RORUSD",
                 pb.OrderSpecType.MARKET,
                 pb.OrderSpecSide.ASK,
-                abs(bids_left),
+                max(min(10, abs(bids_left)), 1),
             )
         elif asks_left <= 0: 
             resp = await self.place_order(
                 "RORUSD",
                 pb.OrderSpecType.MARKET,
                 pb.OrderSpecSide.BID,
-                abs(asks_left),
+                max(min(abs(asks_left), 10),1),
             )
         elif (net_position > 0):
             resp = await self.place_order(
                 "RORUSD",
                 pb.OrderSpecType.MARKET,
                 pb.OrderSpecSide.ASK,
-                min(abs(net_position), asks_left),
+                max(min(10, min(abs(net_position), asks_left)),1),
             )
         elif (net_position < 0):
             resp = await self.place_order(
                 "RORUSD",
                 pb.OrderSpecType.MARKET,
                 pb.OrderSpecSide.ASK,
-                min(abs(net_position), bids_left),
+                max(min(min(abs(net_position), bids_left), 10),1),
             )
 
     async def basic_mm(self, asset, fair, width, clip, max_pos, max_range):
@@ -210,35 +218,20 @@ class PositionTrackerBot(UTCBot):
         ##Remaining ability to quote
         bids_left = max_pos - self.pos[asset]
         asks_left = max_pos + self.pos[asset]
-        if(FUTURES_EXPIRY[asset[2]] <= self.today - 1):
-            if(self.pos[asset] > 0):
-                print("asking ", min(abs(asks_left), abs(self.pos[asset])), "at market value for", asset)
-                resp = await self.place_order(
-                    asset,
-                    pb.OrderSpecType.MARKET,
-                    pb.OrderSpecSide.ASK,
-                    min(100, min(abs(asks_left), abs(self.pos[asset]))),
-                )
-            else:
-                print("bidding ", min(abs(bids_left), abs(self.pos[asset])), "at market value for", asset)
-                resp = await self.place_order(
-                    asset,
-                    pb.OrderSpecType.MARKET,
-                    pb.OrderSpecSide.BID,
-                    min(100, min(abs(bids_left), abs(self.pos[asset]))),
-                )
-            return {'asset': asset,
-                            'bid_prices': [], 
-                            'bid_sizes': [],
-                            'ask_prices': [],
-                            'ask_sizes': [],
-                            'adjusted_fair': fair,
-                            'fade': 0}
-
         fade = (max_range / 2.0) / max_pos
         adjusted_fair = fair - self.pos[asset] * fade
 
-
+        if(FUTURES_EXPIRY[asset[2]] <= self.today - 1):
+            base, quote = parseAssetName(asset)
+            last = 0
+            if(base == 'ROR'):
+                last = LAST_RATE_ROR_USD
+            elif(quote == 'USD'):
+                last = LAST_RATE_HAP_USD
+            else:
+                last = LAST_RATE_HAP_ROR
+            adjusted_fair = last
+ 
         ##Best bid, best ask prices
         bid_p = adjusted_fair - width / 2.0
         ask_p = adjusted_fair + width / 2.0
@@ -250,7 +243,6 @@ class PositionTrackerBot(UTCBot):
             ask_p + TICK_SIZES[asset])
         # print('BID/ASK for ',asset, ": ", bid_p, ask_p)
         
-        print("For asset " + asset + ", you have " + str(bids_left) + "bids left, and " + str(asks_left) + "asks left.")
         if bids_left <= 0:
             #reduce your position as you are violating risk limits!
             ask_p = bid_p
@@ -300,11 +292,12 @@ class PositionTrackerBot(UTCBot):
         self.askorderid = {asset:["",""] for asset in FUTURES}
 
         self.interestRates = {asset:1 for asset in ['ROR', 'HAP', 'USD']}
-        
-        self.edges = {asset:TICK_SIZES[asset]*10 for asset in FUTURES}
-        self.edges["RORUSD"] = TICK_SIZES["RORUSD"]*8
+        self.federalRates = {asset:(1, 0) for asset in ['ROR', 'HAP', 'USD']}
 
-        self.size = {asset:1 for asset in FUTURES}
+        self.edges = {asset:TICK_SIZES[asset]*8 for asset in FUTURES}
+        self.edges["RORUSD"] = TICK_SIZES["RORUSD"]*2
+
+        self.size = {asset:2 for asset in FUTURES}
         self.size["RORUSD"] = 1
 
         self.today = 0
@@ -313,8 +306,8 @@ class PositionTrackerBot(UTCBot):
         parameters based on asset
         """
         self.params = {
-            "limit": 90,
-            "spot_limit": 7
+            "limit": 100,
+            "spot_limit": 10
         }
     async def handle_exchange_update(self, update: pb.FeedMessage):
         kind, _ = betterproto.which_one_of(update, "msg")
@@ -340,16 +333,13 @@ class PositionTrackerBot(UTCBot):
             else:
                 self.cash += update.fill_msg.filled_qty * float(update.fill_msg.price)
                 self.pos[update.fill_msg.asset] -= update.fill_msg.filled_qty
-            if update.fill_msg.asset != 'RORUSD':
-                await self.place_bids([update.fill_msg.asset])
-                await self.place_asks([update.fill_msg.asset])
-            global checked
-            if checked > 100:
-                await self.place_bids(FUTURES)
-                await self.place_asks(FUTURES)
-                checked = 0
-            checked += 1
-            await self.spot_market()
+                global checked
+                if checked > 300:
+                    await self.place_bids(FUTURES)
+                    await self.place_asks(FUTURES)
+                    checked = 0
+                checked += 1
+                await self.spot_market()
         #Identify mid price through order book updates
         elif kind == "market_snapshot_msg":
             for asset in (FUTURES + ["RORUSD"]):
@@ -385,11 +375,12 @@ class PositionTrackerBot(UTCBot):
                 await self.place_bids(FUTURES)
                 await self.place_asks(FUTURES)
                 await self.spot_market()
-            elif("New Federal Funds Target" in data[0]):
+            elif("New Federal Funds Target" in data):
                 d = data.split(" ")
                 currency = d[0]
-                target = d[0]
-                print("New Federal Funds Target for " + currency + ":" + target)
+                target = int(d[-1])
+                self.federalRate[currency] = (target, self.today)
+                print("!!!!! New Federal Funds Target for " + currency + ":" + target)
             else:
                 pass
                 print(update.generic_msg.message)
