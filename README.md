@@ -1,5 +1,5 @@
-# FX Market Making Bot 
-Uses interest rate announcements and interest rate parity to make the market.
+# FX Futures Market Making Bot 
+Uses interest rate announcements, estmitaed interest rate parity for forward contracts to make the market.
 
 Created for the University of Chicago Trading Competition 2021
 
