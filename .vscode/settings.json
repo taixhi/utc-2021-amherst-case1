@@ -1,0 +1,8 @@
+{
+    "python.analysis.extraPaths": [
+        "clients/",
+    ],
+    "python.autoComplete.extraPaths": [
+        "clients/",
+    ]
+}
